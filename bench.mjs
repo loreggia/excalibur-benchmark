@@ -4,7 +4,7 @@
  *
  *   node bench.mjs run --candidate <bundle> --baseline <bundle> [--repeat 3] [--tests a,b] [--out results.json] [--charts dir]
  *                     [--gl swiftshader|hardware] [--headed (also presents every frame)] [--no-warmup]
- *                     [--frames n] [--warmup n] [--gc (trace collections)]
+ *                     [--frames n] [--warmup n] [--gc (trace collections)] [--memory (profile allocations)] [--heap-profiles dir]
  *   node bench.mjs report <results.json> [--markdown] [--warn 20] [--charts dir]
  *   node bench.mjs list
  *
@@ -20,11 +20,14 @@ import { chromium } from 'playwright';
 import { resolveEngine } from './lib/engines.mjs';
 import { createServer } from './lib/server.mjs';
 import { renderMarkdown, renderText, summarize, writeCharts } from './lib/report.mjs';
-import { gcInSteps, traceGc } from './lib/profiling.mjs';
+import { allocationsByFunction, gcInSteps, profileAllocations, traceGc } from './lib/profiling.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HARNESS_DIST = path.join(here, 'harness', 'dist');
 const ENGINE_CACHE = path.join(here, '.engines');
+// the allocation pass profiles this many steps per engine and test: enough samples, and a profile that stays small
+const MEMORY_STEPS = 300;
+const MEMORY_SAMPLING_INTERVAL = 8192;
 
 // swiftshader: deterministic software GL, the only option on GitHub hosted runners. hardware: the machine's real GPU
 // (needs a display, i.e. --headed on most setups), the right choice for drawing benchmarks on dev machines
@@ -101,7 +104,9 @@ async function runCommand(argv) {
       gl: { type: 'string', default: 'swiftshader' },
       frames: { type: 'string' },
       warmup: { type: 'string' },
-      gc: { type: 'boolean', default: false }
+      gc: { type: 'boolean', default: false },
+      memory: { type: 'boolean', default: false },
+      'heap-profiles': { type: 'string' }
     }
   });
   const positive = (value) => (value === undefined ? undefined : Math.max(0, parseInt(value, 10) || 0));
@@ -144,6 +149,7 @@ async function runCommand(argv) {
       frames: stepOptions.frames ?? null,
       warmup: stepOptions.warmup ?? null,
       gc: values.gc,
+      memory: values.memory,
       baseline: { spec: engines.baseline.spec, version: '' },
       candidate: { spec: engines.candidate.spec, version: '' }
     },
@@ -228,6 +234,45 @@ async function runCommand(argv) {
             `[${rep + 1}/${repeat}] ${name.padEnd(28)} ${side.padEnd(9)} ${version.padEnd(24)} ${result.error ? 'ERROR ' + result.error.split('\n')[0] : `median ${result.median.toFixed(2)}${unit} p95 ${result.p95.toFixed(2)}${unit}${lows}${gc}`}  (${((Date.now() - started) / 1000).toFixed(1)}s: setup ${((result.setupMs ?? 0) / 1000).toFixed(1)}s, warmup ${((result.warmupMs ?? 0) / 1000).toFixed(1)}s, measured ${((result.total ?? 0) / 1000).toFixed(1)}s)`
           );
           await page.close();
+        }
+      }
+    }
+
+    // allocations are profiled in runs of their own: the sampling profiler slows down the steps it samples
+    if (values.memory && mode === 'step') {
+      results.memory = {};
+      for (const name of testNames) {
+        results.memory[name] = {};
+        for (const side of ['baseline', 'candidate']) {
+          const { page } = await openHarness(browser, server.url, side, false);
+          try {
+            const profiler = await profileAllocations(page, MEMORY_SAMPLING_INTERVAL);
+            const result = await withTimeout(
+              page.evaluate(([testName, options]) => window.__bench.runTest(testName, options), [
+                name,
+                { mode: 'step', present: false, warmup: stepOptions.warmup, frames: MEMORY_STEPS }
+              ]),
+              timeout,
+              `timed out after ${timeout}ms`
+            );
+            const profile = profiler.profile();
+            if (result.error || !profile) {
+              throw new Error(result.error ?? 'no profile');
+            }
+            if (values['heap-profiles']) {
+              // opens in the Memory panel of Chrome's DevTools
+              fs.mkdirSync(values['heap-profiles'], { recursive: true });
+              fs.writeFileSync(path.join(values['heap-profiles'], `${name}-${side}.heapprofile`), JSON.stringify(profile));
+            }
+            const source = fs.readFileSync(engines[side].file, 'utf8');
+            results.memory[name][side] = { steps: result.frames, ...allocationsByFunction(profile, result.frames, source) };
+            log(`[memory] ${name.padEnd(28)} ${side.padEnd(9)} ${(results.memory[name][side].bytesPerStep / 1024).toFixed(1)} KB per step`);
+          } catch (e) {
+            results.memory[name][side] = { error: e.message };
+            log(`[memory] ${name.padEnd(28)} ${side.padEnd(9)} ERROR ${e.message.split('\n')[0]}`);
+          } finally {
+            await page.close();
+          }
         }
       }
     }
