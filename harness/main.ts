@@ -9,6 +9,10 @@ export interface RunOptions {
   durationMs?: number;
   /** step mode only: present every frame on screen (slower, for watching headed runs) */
   present?: boolean;
+  /** step mode only: overrides the test's number of measured steps */
+  frames?: number;
+  /** step mode only: overrides the test's fixed number of warmup steps */
+  warmup?: number;
 }
 
 /**
@@ -76,7 +80,9 @@ const api: BenchApi = {
       throw new Error('engine not loaded');
     }
     const mode = options.mode ?? 'step';
-    return mode === 'realtime' ? runRealtime(ex, test, options.durationMs ?? 10_000) : runStep(ex, test, { present: options.present ?? false });
+    return mode === 'realtime'
+      ? runRealtime(ex, test, options.durationMs ?? 10_000)
+      : runStep(ex, test, { present: options.present ?? false, frames: options.frames, warmup: options.warmup });
   }
 };
 (window as unknown as { __bench: BenchApi }).__bench = api;

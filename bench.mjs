@@ -4,6 +4,7 @@
  *
  *   node bench.mjs run --candidate <bundle> --baseline <bundle> [--repeat 3] [--tests a,b] [--out results.json] [--charts dir]
  *                     [--gl swiftshader|hardware] [--headed (also presents every frame)] [--no-warmup]
+ *                     [--frames n] [--warmup n]
  *   node bench.mjs report <results.json> [--markdown] [--warn 20] [--charts dir]
  *   node bench.mjs list
  *
@@ -35,7 +36,7 @@ function usage(message) {
   if (message) {
     console.error(message);
   }
-  console.error(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 11).join('\n').replace(/^ \* ?/gm, ''));
+  console.error(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 12).join('\n').replace(/^ \* ?/gm, ''));
   process.exit(message ? 1 : 0);
 }
 
@@ -96,9 +97,13 @@ async function runCommand(argv) {
       headed: { type: 'boolean', default: false },
       quiet: { type: 'boolean', default: false },
       'no-warmup': { type: 'boolean', default: false },
-      gl: { type: 'string', default: 'swiftshader' }
+      gl: { type: 'string', default: 'swiftshader' },
+      frames: { type: 'string' },
+      warmup: { type: 'string' }
     }
   });
+  const positive = (value) => (value === undefined ? undefined : Math.max(0, parseInt(value, 10) || 0));
+  const stepOptions = { frames: positive(values.frames) || undefined, warmup: positive(values.warmup) };
   if (!(values.gl in CHROMIUM_ARGS)) {
     usage(`--gl must be one of ${Object.keys(CHROMIUM_ARGS).join(', ')}`);
   }
@@ -134,6 +139,8 @@ async function runCommand(argv) {
       gl: values.gl,
       mode,
       repeat,
+      frames: stepOptions.frames ?? null,
+      warmup: stepOptions.warmup ?? null,
       baseline: { spec: engines.baseline.spec, version: '' },
       candidate: { spec: engines.candidate.spec, version: '' }
     },
@@ -192,7 +199,10 @@ async function runCommand(argv) {
           let result;
           try {
             result = await withTimeout(
-              page.evaluate(([testName, runMode, present]) => window.__bench.runTest(testName, { mode: runMode, present }), [name, mode, values.headed]),
+              page.evaluate(([testName, options]) => window.__bench.runTest(testName, options), [
+                name,
+                { mode, present: values.headed, ...stepOptions }
+              ]),
               timeout,
               `timed out after ${timeout}ms`
             );
@@ -204,8 +214,9 @@ async function runCommand(argv) {
           }
           results.tests[name][side].push(result);
           const unit = mode === 'realtime' ? 'fps' : 'ms';
+          const lows = Number.isFinite(result.low1) ? ` 5% low ${result.low5.toFixed(2)}${unit} 1% low ${result.low1.toFixed(2)}${unit}` : '';
           log(
-            `[${rep + 1}/${repeat}] ${name.padEnd(28)} ${side.padEnd(9)} ${version.padEnd(24)} ${result.error ? 'ERROR ' + result.error.split('\n')[0] : `median ${result.median.toFixed(2)}${unit} p95 ${result.p95.toFixed(2)}${unit}`}  (${((Date.now() - started) / 1000).toFixed(1)}s: setup ${((result.setupMs ?? 0) / 1000).toFixed(1)}s, warmup ${((result.warmupMs ?? 0) / 1000).toFixed(1)}s, measured ${((result.total ?? 0) / 1000).toFixed(1)}s)`
+            `[${rep + 1}/${repeat}] ${name.padEnd(28)} ${side.padEnd(9)} ${version.padEnd(24)} ${result.error ? 'ERROR ' + result.error.split('\n')[0] : `median ${result.median.toFixed(2)}${unit} p95 ${result.p95.toFixed(2)}${unit}${lows}`}  (${((Date.now() - started) / 1000).toFixed(1)}s: setup ${((result.setupMs ?? 0) / 1000).toFixed(1)}s, warmup ${((result.warmupMs ?? 0) / 1000).toFixed(1)}s, measured ${((result.total ?? 0) / 1000).toFixed(1)}s)`
           );
           await page.close();
         }

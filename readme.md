@@ -75,6 +75,23 @@ asynchronously; without the sync the timer would only see the CPU side).
 Interactive page: `npm run dev` then open `http://localhost:5173/?engine=/@fs/<absolute path>/build/dist/excalibur.js`
 (or any URL serving a bundle), pick a test and mode, and charts are rendered inline.
 
+### The slow end: lows
+
+Besides the median and p95, every step mode run reports the p99 and the **5% and 1% lows**: the mean of the slowest 5% and
+1% of the steps. That is where hitches such as garbage collection pauses show while barely moving the median. The report
+takes their median over the runs, since one disturbed run moves a mean a long way. They need more steps than the defaults
+to settle, so pass `--frames` and `--warmup` (a cold page is still compiling through its first few hundred steps, which
+would otherwise make up the slowest 1%):
+
+```bash
+node bench.mjs run --candidate ../Excalibur/build/esm/excalibur.js --baseline npm:excalibur@latest \
+  --frames 1200 --warmup 300 --repeat 5
+```
+
+Before the measured steps the harness runs a full garbage collection (`gc()`, from Chromium's `--expose-gc`), so what
+setup and warmup left behind is not collected during them. Otherwise that collection lands in the measured steps or not
+depending on how fast an engine allocates, and the engine allocating less is the one to pay for it.
+
 The harness is served cross-origin isolated (COOP/COEP): Chromium otherwise rounds `performance.now()` to 100µs, which
 is a third of a fast step. `meta.crossOriginIsolated` in the results says whether it was.
 

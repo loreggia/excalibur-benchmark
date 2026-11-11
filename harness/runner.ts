@@ -8,6 +8,15 @@ export interface StepOptions {
    * outside the timed window, samples are unaffected; the run takes longer because it becomes bound to the display
    */
   present?: boolean;
+  /**
+   * Overrides the test's number of measured steps, e.g. more of them for stable 1% lows
+   */
+  frames?: number;
+  /**
+   * Overrides the test's fixed number of warmup steps: a cold page is still compiling during the first few hundred,
+   * which would otherwise make up the slowest 1%
+   */
+  warmup?: number;
 }
 
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -21,6 +30,14 @@ export interface BaseResult {
   median: number;
   p95: number;
   mean: number;
+  /** step mode: 99th percentile of the step times */
+  p99?: number;
+  /**
+   * step mode: mean of the slowest 1% and 5% of the steps (the "1% lows" of frame time), which is where garbage
+   * collection pauses and other hitches show up while barely moving the median
+   */
+  low1?: number;
+  low5?: number;
   extras: Record<string, number>;
   error?: string;
 }
@@ -56,10 +73,38 @@ export function quantile(sortedAscending: number[], q: number): number {
   return sortedAscending[lower] * (1 - weight) + sortedAscending[upper] * weight;
 }
 
+/**
+ * Mean of the largest `share` of the samples, at least one of them
+ */
+export function slowestMean(sortedAscending: number[], share: number): number {
+  if (sortedAscending.length === 0) {
+    return NaN;
+  }
+  const count = Math.max(1, Math.round(sortedAscending.length * share));
+  let sum = 0;
+  for (let i = sortedAscending.length - count; i < sortedAscending.length; i++) {
+    sum += sortedAscending[i];
+  }
+  return sum / count;
+}
+
 export function summarize(samples: number[]) {
   const sorted = [...samples].sort((a, b) => a - b);
   const mean = samples.reduce((sum, value) => sum + value, 0) / (samples.length || 1);
   return { median: quantile(sorted, 0.5), p95: quantile(sorted, 0.95), mean };
+}
+
+/**
+ * Step times only: in fps samples the slow end is the low end
+ */
+export function summarizeSteps(samples: number[]) {
+  const sorted = [...samples].sort((a, b) => a - b);
+  return {
+    ...summarize(samples),
+    p99: quantile(sorted, 0.99),
+    low5: slowestMean(sorted, 0.05),
+    low1: slowestMean(sorted, 0.01)
+  };
 }
 
 const CANVAS_WIDTH = 320;
@@ -119,9 +164,9 @@ function syncGpu(engine: Ex) {
   }
 }
 
-async function runWarmup(test: BenchTest, ctx: BenchContext, step: () => void, present: boolean): Promise<number> {
+async function runWarmup(test: BenchTest, ctx: BenchContext, step: () => void, present: boolean, warmup = test.warmup ?? 0): Promise<number> {
   let warmupSteps = 0;
-  for (let i = 0; i < (test.warmup ?? 0); i++) {
+  for (let i = 0; i < warmup; i++) {
     step();
     warmupSteps++;
     if (present) {
@@ -156,7 +201,7 @@ export async function runStep(ex: Ex, test: BenchTest, options: StepOptions = {}
     engineVersion: String(ex.EX_VERSION ?? 'unknown'),
     stepMs: test.stepMs,
     warmupSteps: 0,
-    frames: test.frames,
+    frames: options.frames ?? test.frames,
     samples: [],
     median: NaN,
     p95: NaN,
@@ -179,12 +224,18 @@ export async function runStep(ex: Ex, test: BenchTest, options: StepOptions = {}
         }
       : () => clock.step(test.stepMs);
     const warmupStart = performance.now();
-    base.warmupSteps = await runWarmup(test, ctx, step, present);
+    base.warmupSteps = await runWarmup(test, ctx, step, present, options.warmup);
     base.warmupMs = performance.now() - warmupStart;
 
-    const samples: number[] = new Array(test.frames);
+    // Collect what setup and warmup left behind (the CLI launches Chromium with --expose-gc). Its first collection would
+    // otherwise land in the measured steps or not depending on how fast an engine allocates, which penalises the engine
+    // that allocates less: it gets there later
+    (globalThis as { gc?: () => void }).gc?.();
+
+    const frames = base.frames;
+    const samples: number[] = new Array(frames);
     const start = performance.now();
-    for (let i = 0; i < test.frames; i++) {
+    for (let i = 0; i < frames; i++) {
       ctx.frame = i;
       test.onFrame?.(ctx);
       const t0 = performance.now();
@@ -196,7 +247,7 @@ export async function runStep(ex: Ex, test: BenchTest, options: StepOptions = {}
     }
     base.total = performance.now() - start;
     base.samples = samples;
-    Object.assign(base, summarize(samples));
+    Object.assign(base, summarizeSteps(samples));
     base.extras = test.extras?.(ctx) ?? {};
   } catch (e) {
     base.error = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
