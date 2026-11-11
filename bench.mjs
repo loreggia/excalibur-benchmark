@@ -4,7 +4,7 @@
  *
  *   node bench.mjs run --candidate <bundle> --baseline <bundle> [--repeat 3] [--tests a,b] [--out results.json] [--charts dir]
  *                     [--gl swiftshader|hardware] [--headed (also presents every frame)] [--no-warmup]
- *                     [--frames n] [--warmup n]
+ *                     [--frames n] [--warmup n] [--gc (trace collections)]
  *   node bench.mjs report <results.json> [--markdown] [--warn 20] [--charts dir]
  *   node bench.mjs list
  *
@@ -20,6 +20,7 @@ import { chromium } from 'playwright';
 import { resolveEngine } from './lib/engines.mjs';
 import { createServer } from './lib/server.mjs';
 import { renderMarkdown, renderText, summarize, writeCharts } from './lib/report.mjs';
+import { gcInSteps, traceGc } from './lib/profiling.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HARNESS_DIST = path.join(here, 'harness', 'dist');
@@ -99,7 +100,8 @@ async function runCommand(argv) {
       'no-warmup': { type: 'boolean', default: false },
       gl: { type: 'string', default: 'swiftshader' },
       frames: { type: 'string' },
-      warmup: { type: 'string' }
+      warmup: { type: 'string' },
+      gc: { type: 'boolean', default: false }
     }
   });
   const positive = (value) => (value === undefined ? undefined : Math.max(0, parseInt(value, 10) || 0));
@@ -141,6 +143,7 @@ async function runCommand(argv) {
       repeat,
       frames: stepOptions.frames ?? null,
       warmup: stepOptions.warmup ?? null,
+      gc: values.gc,
       baseline: { spec: engines.baseline.spec, version: '' },
       candidate: { spec: engines.candidate.spec, version: '' }
     },
@@ -195,6 +198,7 @@ async function runCommand(argv) {
         for (const side of order) {
           const { page, errors, version } = await openHarness(browser, server.url, side, values.headed);
           results.meta[side].version = version;
+          const tracer = values.gc && mode === 'step' ? await traceGc(page) : undefined;
           const started = Date.now();
           let result;
           try {
@@ -212,11 +216,16 @@ async function runCommand(argv) {
           if (!result.error && errors.length) {
             result.error = `page errors: ${errors.join(' | ')}`;
           }
+          if (tracer && !result.error) {
+            result.gc = gcInSteps(tracer.events(), result);
+          }
+          delete result.timeline;
           results.tests[name][side].push(result);
           const unit = mode === 'realtime' ? 'fps' : 'ms';
           const lows = Number.isFinite(result.low1) ? ` 5% low ${result.low5.toFixed(2)}${unit} 1% low ${result.low1.toFixed(2)}${unit}` : '';
+          const gc = result.gc ? `, ${result.gc.minor + result.gc.major} GCs in ${result.gc.stepsWithGc} steps` : '';
           log(
-            `[${rep + 1}/${repeat}] ${name.padEnd(28)} ${side.padEnd(9)} ${version.padEnd(24)} ${result.error ? 'ERROR ' + result.error.split('\n')[0] : `median ${result.median.toFixed(2)}${unit} p95 ${result.p95.toFixed(2)}${unit}${lows}`}  (${((Date.now() - started) / 1000).toFixed(1)}s: setup ${((result.setupMs ?? 0) / 1000).toFixed(1)}s, warmup ${((result.warmupMs ?? 0) / 1000).toFixed(1)}s, measured ${((result.total ?? 0) / 1000).toFixed(1)}s)`
+            `[${rep + 1}/${repeat}] ${name.padEnd(28)} ${side.padEnd(9)} ${version.padEnd(24)} ${result.error ? 'ERROR ' + result.error.split('\n')[0] : `median ${result.median.toFixed(2)}${unit} p95 ${result.p95.toFixed(2)}${unit}${lows}${gc}`}  (${((Date.now() - started) / 1000).toFixed(1)}s: setup ${((result.setupMs ?? 0) / 1000).toFixed(1)}s, warmup ${((result.warmupMs ?? 0) / 1000).toFixed(1)}s, measured ${((result.total ?? 0) / 1000).toFixed(1)}s)`
           );
           await page.close();
         }

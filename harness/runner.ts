@@ -17,7 +17,20 @@ export interface StepOptions {
    * which would otherwise make up the slowest 1%
    */
   warmup?: number;
+  /**
+   * Awaited right before the first and right after the last measured step, outside the timed window. The CLI uses
+   * them to trace or profile exactly the measured steps
+   */
+  hooks?: MeasureHooks;
 }
+
+export interface MeasureHooks {
+  measureStart?: () => Promise<void>;
+  measureEnd?: () => Promise<void>;
+}
+
+/** The `performance.mark` set right before the first measured step, which lines frames up with a trace */
+export const MEASURE_MARK = 'excalibur-bench-measure';
 
 const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
@@ -53,6 +66,11 @@ export interface StepResult extends BaseResult {
   setupMs: number;
   /** wall clock ms for the warmup steps */
   warmupMs: number;
+  /**
+   * `performance.now()` at the start of each measured step and at {@link MEASURE_MARK}, only when hooks were given:
+   * what the CLI needs to tell which steps a garbage collection fell into
+   */
+  timeline?: { mark: number; starts: number[] };
 }
 
 export interface RealtimeResult extends BaseResult {
@@ -234,6 +252,10 @@ export async function runStep(ex: Ex, test: BenchTest, options: StepOptions = {}
 
     const frames = base.frames;
     const samples: number[] = new Array(frames);
+    const hooks = options.hooks;
+    const starts: number[] | undefined = hooks ? new Array(frames) : undefined;
+    await hooks?.measureStart?.();
+    const mark = hooks ? performance.mark(MEASURE_MARK).startTime : 0;
     const start = performance.now();
     for (let i = 0; i < frames; i++) {
       ctx.frame = i;
@@ -241,12 +263,19 @@ export async function runStep(ex: Ex, test: BenchTest, options: StepOptions = {}
       const t0 = performance.now();
       step();
       samples[i] = performance.now() - t0;
+      if (starts) {
+        starts[i] = t0;
+      }
       if (present) {
         await nextFrame();
       }
     }
     base.total = performance.now() - start;
+    await hooks?.measureEnd?.();
     base.samples = samples;
+    if (starts) {
+      base.timeline = { mark, starts };
+    }
     Object.assign(base, summarizeSteps(samples));
     base.extras = test.extras?.(ctx) ?? {};
   } catch (e) {

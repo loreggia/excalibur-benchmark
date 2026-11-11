@@ -75,7 +75,7 @@ asynchronously; without the sync the timer would only see the CPU side).
 Interactive page: `npm run dev` then open `http://localhost:5173/?engine=/@fs/<absolute path>/build/dist/excalibur.js`
 (or any URL serving a bundle), pick a test and mode, and charts are rendered inline.
 
-### The slow end: lows
+### The slow end: lows and garbage collection
 
 Besides the median and p95, every step mode run reports the p99 and the **5% and 1% lows**: the mean of the slowest 5% and
 1% of the steps. That is where hitches such as garbage collection pauses show while barely moving the median. The report
@@ -85,8 +85,13 @@ would otherwise make up the slowest 1%):
 
 ```bash
 node bench.mjs run --candidate ../Excalibur/build/esm/excalibur.js --baseline npm:excalibur@latest \
-  --frames 1200 --warmup 300 --repeat 5
+  --frames 1200 --warmup 300 --repeat 5 --gc
 ```
+
+`--gc` traces the measured steps and reports the collections on the main thread during them: how many, how long they
+paused, how many steps had one in them, and what share of the slowest 5% and 1% of the steps did. It hooks into the
+measured steps from the CLI (`window.__benchHook`, awaited outside the timed window), so neither setup nor warmup is in
+its numbers.
 
 Before the measured steps the harness runs a full garbage collection (`gc()`, from Chromium's `--expose-gc`), so what
 setup and warmup left behind is not collected during them. Otherwise that collection lands in the measured steps or not

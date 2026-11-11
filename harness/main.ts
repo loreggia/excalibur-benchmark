@@ -1,5 +1,5 @@
 import { tests } from './tests/index';
-import { runRealtime, runStep, type Mode, type Result } from './runner';
+import { runRealtime, runStep, type MeasureHooks, type Mode, type Result } from './runner';
 import type { Ex } from './test';
 import { lineChart } from '../lib/chart.mjs';
 
@@ -13,6 +13,16 @@ export interface RunOptions {
   frames?: number;
   /** step mode only: overrides the test's fixed number of warmup steps */
   warmup?: number;
+}
+
+/**
+ * Exposed by the CLI (playwright's exposeFunction) when it traces or profiles the measured steps
+ */
+type BenchHook = (phase: 'start' | 'end') => Promise<void>;
+
+function hooksFromCli(): MeasureHooks | undefined {
+  const hook = (window as unknown as { __benchHook?: BenchHook }).__benchHook;
+  return hook ? { measureStart: () => hook('start'), measureEnd: () => hook('end') } : undefined;
 }
 
 /**
@@ -82,7 +92,7 @@ const api: BenchApi = {
     const mode = options.mode ?? 'step';
     return mode === 'realtime'
       ? runRealtime(ex, test, options.durationMs ?? 10_000)
-      : runStep(ex, test, { present: options.present ?? false, frames: options.frames, warmup: options.warmup });
+      : runStep(ex, test, { present: options.present ?? false, frames: options.frames, warmup: options.warmup, hooks: hooksFromCli() });
   }
 };
 (window as unknown as { __bench: BenchApi }).__bench = api;
