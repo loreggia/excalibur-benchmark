@@ -123,6 +123,13 @@ re-run it on a PR by commenting `/benchmark`, optionally with `--baseline npm:ex
 | `edge-floor-realistic-200` | 200 boxes landing along a 4000px edge collider, including its ends (polygon vs edge SAT path) |
 | `sleeping-pile-wake` | a sleeping 200 box pile hit by a new box every 60 frames (sleep/wake cycle, contact persistence) |
 | `bunnymark-2000`, `bunnymark-5000` | drawing pipeline only: port of [excalibur-bunnymark](https://github.com/excaliburjs/excalibur-bunnymark), sprites drawn straight through the graphics context |
+| `tilemap-6-layers` | 6 tile map layers of 120x80 cells under a camera following an actor: on screen tile search and tile drawing |
+| `actors-500x4-children` | 500 moving actors with 4 children each: child transforms, offscreen culling and the per entity draw path |
+| `composite-colliders-1000` | 1000 resting bodies with a two shape composite collider each: collider bookkeeping |
+| `top-down-300` | 4 tile map layers and 300 characters with a collider and 2 children, camera on one: a small game |
+
+The last four are shaped like a game rather than a stress test of one system, move things from an overridden
+`onPostUpdate` instead of event listeners, and run 1200 steps after 300 of warmup, so their lows mean something.
 
 Extras reported next to timings (e.g. `sleepingAtEnd`, `firstFrameAllAsleep`, `fellThrough`, `outside`) double as
 sanity checks that the scenario behaved the same on both engines.
