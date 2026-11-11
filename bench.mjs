@@ -4,7 +4,7 @@
  *
  *   node bench.mjs run --candidate <bundle> --baseline <bundle> [--repeat 3] [--tests a,b] [--out results.json] [--charts dir]
  *                     [--gl swiftshader|hardware] [--headed (also presents every frame)] [--no-warmup]
- *                     [--frames n] [--warmup n] [--gc (trace collections)] [--memory (profile allocations)] [--heap-profiles dir]
+ *                     [--frames n] [--warmup n] [--gc (trace collections)] [--memory (profile allocations)] [--heap-profiles dir] [--channel chrome]
  *   node bench.mjs report <results.json> [--markdown] [--warn 20] [--charts dir]
  *   node bench.mjs list
  *
@@ -106,7 +106,8 @@ async function runCommand(argv) {
       warmup: { type: 'string' },
       gc: { type: 'boolean', default: false },
       memory: { type: 'boolean', default: false },
-      'heap-profiles': { type: 'string' }
+      'heap-profiles': { type: 'string' },
+      channel: { type: 'string' }
     }
   });
   const positive = (value) => (value === undefined ? undefined : Math.max(0, parseInt(value, 10) || 0));
@@ -137,13 +138,15 @@ async function runCommand(argv) {
       candidate: engines.candidate.file 
     },
   });
-  const browser = await chromium.launch({ headless: !values.headed, args: CHROMIUM_ARGS[values.gl] });
+  const browser = await chromium.launch({ headless: !values.headed, args: CHROMIUM_ARGS[values.gl], channel: values.channel });
   const results = {
     meta: {
       date: new Date().toISOString(),
       node: process.version,
       chromium: browser.version(),
       gl: values.gl,
+      // the browser playwright launched: its own Chromium when null
+      channel: values.channel ?? null,
       mode,
       repeat,
       frames: stepOptions.frames ?? null,

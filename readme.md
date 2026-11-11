@@ -85,7 +85,7 @@ would otherwise make up the slowest 1%):
 
 ```bash
 node bench.mjs run --candidate ../Excalibur/build/esm/excalibur.js --baseline npm:excalibur@latest \
-  --frames 1200 --warmup 300 --repeat 5 --gc --memory
+  --frames 1200 --warmup 300 --repeat 5 --gc --memory --gl hardware --channel chrome
 ```
 
 - `--gc` traces the measured steps and reports the collections on the main thread during them: how many, how long they
@@ -94,9 +94,10 @@ node bench.mjs run --candidate ../Excalibur/build/esm/excalibur.js --baseline np
   bytes allocated per step (what was collected again included) and the functions allocating the most. The profiler slows
   down the steps it samples, which is why it gets runs of its own. `--heap-profiles <dir>` also saves each profile, to be
   opened in the Memory panel of Chrome's DevTools.
+- `--channel chrome` (or `msedge`) runs an installed browser instead of playwright's Chromium.
 
-Both hook into the measured steps from the CLI (`window.__benchHook`, awaited outside the timed window), so neither
-setup nor warmup is in their numbers.
+`--gc` and `--memory` hook into the measured steps from the CLI (`window.__benchHook`, awaited outside the timed
+window), so neither setup nor warmup is in their numbers.
 
 Before the measured steps the harness runs a full garbage collection (`gc()`, from Chromium's `--expose-gc`), so what
 setup and warmup left behind is not collected during them. Otherwise that collection lands in the measured steps or not
