@@ -144,6 +144,11 @@ async function runCommand(argv) {
     // discover tests with the candidate engine loaded
     const probe = await openHarness(browser, server.url, 'candidate', false);
     let testNames = (await probe.page.evaluate(() => window.__bench.listTests())).map((t) => t.name);
+    // without it Chromium rounds performance.now() to 100µs
+    results.meta.crossOriginIsolated = await probe.page.evaluate(() => window.crossOriginIsolated);
+    if (!results.meta.crossOriginIsolated) {
+      log('warning: the harness is not cross-origin isolated, step times are rounded to 100µs');
+    }
     await probe.page.close();
     if (values.tests) {
       const wanted = values.tests.split(',').map((s) => s.trim());

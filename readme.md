@@ -75,6 +75,9 @@ asynchronously; without the sync the timer would only see the CPU side).
 Interactive page: `npm run dev` then open `http://localhost:5173/?engine=/@fs/<absolute path>/build/dist/excalibur.js`
 (or any URL serving a bundle), pick a test and mode, and charts are rendered inline.
 
+The harness is served cross-origin isolated (COOP/COEP): Chromium otherwise rounds `performance.now()` to 100µs, which
+is a third of a fast step. `meta.crossOriginIsolated` in the results says whether it was.
+
 ### In the Excalibur CI
 
 The Excalibur repo runs this tool on every PR and on pushes to main (`.github/workflows/benchmark.yml`). Collaborators can
